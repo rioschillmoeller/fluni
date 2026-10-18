@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FlUni · Contact tracing at Stanford</title>
+  <link rel="stylesheet" href="../heatmap/vendor/leaflet/leaflet.css">
+  <script src="../heatmap/vendor/leaflet/leaflet.js"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <aside id="side">
+    <header>
+      <h1>FlUni contact tracing</h1>
+      <p class="sub" id="runline">Stanford campus · loading…</p>
+    </header>
+
+    <section class="card" id="rulecard">
+      <h2>Who gets notified?</h2>
+      <label class="radio"><input type="radio" name="rule" value="cdc"> CDC close contact <span class="hint">15+ min within 6 ft in a day</span></label>
+      <label class="radio"><input type="radio" name="rule" value="dose" checked> FlUni exposure dose <span class="hint">chance they caught it ≥ <b id="thrlabel">2%</b></span></label>
+      <input type="range" id="thr" min="0.25" max="10" step="0.25" value="2" aria-label="Dose threshold (%)">
+      <label class="check"><input type="checkbox" id="truth"> Reveal who was really infected (sim truth)</label>
+    </section>
+
+    <section class="card" id="score"></section>
+
+    <section class="card grow">
+      <h2>Reported cases <span class="hint" id="casecount"></span></h2>
+      <ol id="cases"></ol>
+    </section>
+  </aside>
+
+  <main>
+    <div id="map"></div>
+    <div id="legend"></div>
+  </main>
+
+  <section id="detail">
+    <div id="detailhead"></div>
+    <div id="tablewrap"><table id="contacts"></table></div>
+  </section>
+
+  <div id="phone" hidden>
+    <button id="phoneclose" aria-label="Close">×</button>
+    <div class="notch"></div>
+    <div id="phonebody"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

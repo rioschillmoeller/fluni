@@ -49,7 +49,7 @@ def stage_factor(stage):
     """Stage as days since the other person's symptoms began, or a name."""
     if isinstance(stage, str) and not stage.lstrip("-").isdigit():
         stage = STAGE_NAMES[stage.lower()]
-    day = int(stage)
+    day = math.floor(float(stage))
     if day < -2 or day > 7:
         return 0.0
     return STAGE_PROFILE[day]
@@ -79,12 +79,28 @@ def virus_decay(rh):
     return low + (high - low) * (rh - 25) / 20
 
 
-def transmission_probability(duration_min, distance_m, room_m2, indoors,
-                             stage, humidity_pct, outdoor_temp_c=None,
-                             ach=DEFAULT_ACH, ceiling_m=CEILING):
-    """lambda_{j->i}: probability the meeting infects you, given they ARE infected."""
+def _check(name, value, lo=None, hi=None):
+    if value is None or math.isnan(value):
+        raise ValueError(f"{name} is required")
+    if (lo is not None and value < lo) or (hi is not None and value > hi):
+        rng = f"[{lo if lo is not None else '-inf'}, {hi if hi is not None else 'inf'}]"
+        raise ValueError(f"{name} must be in {rng}, got {value}")
+
+
+def contact_dose(duration_min, distance_m, room_m2, indoors, stage, humidity_pct,
+                 outdoor_temp_c=None, ach=DEFAULT_ACH, ceiling_m=CEILING,
+                 quanta=QUANTA_PEAK):
+    """Infectious dose (quanta inhaled) from one contact with an infected person.
+    `quanta` is their emission rate at peak (q/h); quiet activities such as
+    sleeping or studying emit far less than talking."""
+    _check("duration_min", duration_min, 0)
+    _check("distance_m", distance_m, 0)
+    _check("humidity_pct", humidity_pct, 0, 100)
+    if indoors:
+        _check("room_m2", room_m2, 1e-6)
+        _check("ach", ach, 0)
     hours = duration_min / 60
-    q = QUANTA_PEAK * stage_factor(stage)
+    q = quanta * stage_factor(stage)
     d = max(distance_m, 0.3)
 
     # Near field: the exhaled plume dilutes roughly with distance squared.
@@ -97,8 +113,29 @@ def transmission_probability(duration_min, distance_m, room_m2, indoors,
         volume = room_m2 * ceiling_m
         loss = ach + DEPOSITION + virus_decay(rh)
         dose += q * BREATHING_RATE * hours / (volume * loss)
+    return dose
 
-    return 1 - math.exp(-dose)
+
+def transmission_probability(duration_min, distance_m, room_m2, indoors,
+                             stage, humidity_pct, outdoor_temp_c=None,
+                             ach=DEFAULT_ACH, ceiling_m=CEILING,
+                             quanta=QUANTA_PEAK):
+    """lambda_{j->i}: probability the meeting infects you, given they ARE infected."""
+    return 1 - math.exp(-contact_dose(duration_min, distance_m, room_m2, indoors,
+                                      stage, humidity_pct, outdoor_temp_c, ach,
+                                      ceiling_m, quanta))
+
+
+def pair_lambda(meetings, **common):
+    """lambda for one pair over one day: doses from all their meetings add up
+    and lambda = 1 - e^(-total dose) is applied once (Baker et al. use one
+    lambda per pair per day). Treating each 5-minute row as a separate chance
+    that the other person is infected overcounts badly (issue #5).
+
+    `meetings` is a list of dicts with contact_dose's keyword arguments;
+    `common` fills in any keys a meeting leaves out."""
+    total = sum(contact_dose(**{**common, **m}) for m in meetings)
+    return 1 - math.exp(-total)
 
 
 def still_infected(days, mean=7.0, shape=4):
@@ -113,6 +150,9 @@ def update(prior, their_p, duration_min, distance_m, room_m2, indoors,
            ach=DEFAULT_ACH):
     """Returns a dict with lambda, the probability you were infected right after
     the meeting, and the probability you have the flu now."""
+    _check("prior", prior, 0, 1)
+    _check("their_p", their_p, 0, 1)
+    _check("days_since", days_since, 0)
     lam = transmission_probability(duration_min, distance_m, room_m2, indoors,
                                    stage, humidity_pct, outdoor_temp_c, ach)
 
@@ -150,9 +190,15 @@ def main():
     ap.add_argument("--ach", type=float, default=DEFAULT_ACH,
                     help="ventilation, air changes per hour (optional)")
     a = ap.parse_args()
+    if a.temp is None and not a.outdoors:
+        print("Note: no --temp given, so indoor humidity = outdoor humidity "
+              "(the slider page assumes 5 C outdoors).")
 
-    r = update(a.prior, a.p, a.duration, a.distance, a.room, not a.outdoors,
+    try:
+        r = update(a.prior, a.p, a.duration, a.distance, a.room, not a.outdoors,
                a.stage, a.days, a.humidity, a.temp, a.ach)
+    except ValueError as e:
+        ap.error(str(e))
     print(f"Transmission probability if they are infected (lambda): {r['lambda']:.4f}")
     print(f"Chance this meeting infected you:                     {r['p_infected_by_meeting']:.4f}")
     print(f"P(flu) right after the meeting:                        {r['p_after_meeting']:.4f}")
