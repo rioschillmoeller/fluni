@@ -5,6 +5,7 @@ import SwiftUI
 /// per-person distances (those live in the Developer screen).
 struct TodayView: View {
     @ObservedObject var model: ProximityModel
+    @ObservedObject var store: SelfReportStore
     @State private var showHow = false
     @State private var showCalc = false
     /// One line when iOS settings would stop alerts while FlUni is closed.
@@ -27,12 +28,18 @@ struct TodayView: View {
                     }
                     WalkInBanner(model: model)
                     UnusualSignalsBanner(model: model)
-                    if level == .nearby { NearbyBanner().transition(.opacity) }
-                    statusCard
-                    riskCard
-                    minutesCard
-                    nearbyCard
-                    ExposureHistorySection(store: model.exposureHistory)
+                    AlwaysLocationCard()  // step two of the location ask (BackgroundLocation.offersAlways); flu-offdetect
+                    if model.selfStatusOverridesRisk {
+                        // Someone who reported being sick never sees "All clear" or a risk percentage.
+                        stayHome
+                    } else {
+                        if level == .nearby { NearbyBanner().transition(.opacity) }
+                        statusCard
+                        riskCard
+                        minutesCard
+                        nearbyCard
+                        ExposureHistorySection(store: model.exposureHistory)
+                    }
                     Button { showHow = true } label: {
                         Label("How FlUni works and what it shares", systemImage: "info.circle")
                             .font(.fluni(.subheadline, weight: .semibold))
@@ -43,6 +50,7 @@ struct TodayView: View {
                 }
                 .padding(16)
             }
+            .tissueTabBarScrollRoom(alert: true)
             .background(Theme.paper)
             .navigationTitle("Today")
             .animation(reduceMotion ? nil : .default, value: level)
@@ -65,6 +73,18 @@ struct TodayView: View {
         }
     }
 
+    // MARK: Sick
+
+    private var stayHome: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            AtHomeCard(model: model, store: store)
+            Text(model.myRisk == .contagious ? "Phones near you see: tested positive." : "Phones near you see: possibly sick.")
+                .font(.fluni(.footnote)).foregroundStyle(Theme.ink2)
+                .accessibilityIdentifier("today.sharedStatus")
+        }
+        .onAppear { store.reconcile(with: model) }
+    }
+
     // MARK: Status
 
     private var statusCard: some View {
@@ -79,8 +99,14 @@ struct TodayView: View {
                 if level == .none {
                     Image("Tissue").resizable().scaledToFit().frame(width: 56, height: 56).accessibilityHidden(true)
                 } else {
-                    Image(systemName: level == .closeContact ? "exclamationmark.circle.fill" : "info.circle.fill")
-                        .font(.title).accessibilityHidden(true)
+                    // Looks like an info button, so it is one: it opens how alerts work.
+                    Button { showHow = true } label: {
+                        Image(systemName: level == .closeContact ? "exclamationmark.circle.fill" : "info.circle.fill")
+                            .font(.title).frame(minWidth: 44, minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("How alerts work")
+                    .accessibilityIdentifier("status.info")
                 }
             }
             if level != .none {
@@ -97,7 +123,7 @@ struct TodayView: View {
         .foregroundStyle(s.text)
         // All clear: paper box with a sage tint. Alerts: Lisa's peach box (ink text; fire-ink fails on peach).
         .modifier(StatusBox(level: level, fill: s.fill))
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)  // not .combine: that would swallow the info button
     }
 
     private static func style(_ level: AlertLevel) -> (title: String, subtitle: String, fill: Color, text: Color) {

@@ -82,6 +82,11 @@ status). A dropped link is re-requested for 10 min; iOS completes it when the ph
 samples count only when no advert for that ID arrived in 3 s, so foreground ranging is unchanged. A BLE median
 over n < 4 samples gets sigma × sqrt(4/n), so P(≤ 6 ft) stays honest without UWB. The links carry the same 16
 bytes as the advert; FlUni never links a peer's old and new IDs. Log lines: `hold open|poll|lost|reconnected …`.
+**Always location** (`Core/BackgroundLocation.swift`). With Always, FlUni keeps standard location updates on
+off screen (3 km accuracy, 500 m filter: cell and Wi-Fi, no GPS radio; blue location indicator shown), which keeps
+it running while locked: the 1 s tick, the link polls and a Bluetooth scan restart every 10 s carry on. Coarse
+fixes are never used for walk-in warnings (geofences do that). Off while paused or after Delete my data; without
+Always nothing changes. The Always ask is the card on Today after onboarding (and Settings).
 After a swipe-away nothing runs until iOS relaunches FlUni for a location event (significant change, visit or
 building geofence, Always permission only); FlUni then restarts Bluetooth detection. A phone that is powered
 off cannot be detected by anything.
@@ -150,6 +155,18 @@ number is an extra line under it, never in its place. `percentText` (whole perce
 with the heat map. Debug only: `-demoPeer contagious@0.5` (or `possible@2`) puts a pretend peer that far away,
 no radios needed, so the simulator shows p climbing (add `-speed 60` to see it move every second).
 
+**Relaunch** (`Core/RiskState.swift`): the estimate survives iOS ending and relaunching FlUni. The exposure tracker
+(24 h per-minute buckets, per-ID dose with s and stage, minutes, alert level) and the alert gate (when each alert was
+last notified) are saved to `Application Support/risk-state.json` on the phone only (file protection until first
+unlock, atomic writes): at once on every alert-level change or notification, on resign-active and on going to the
+background (a swipe-away gives no termination callback), and at most every 30 s while the number changes. It is
+restored in `ProximityModel.init`, before the first tick on any launch (background relaunches included), so a cold
+launch next to the same sick person posts nothing new within the 30 min / 12 h cooldowns; an in-app alert already
+read ("Got it") doesn't pop again either. On launch the 24 h window moves on by the real time since the save and nothing is credited for that
+gap; a corrupt or future-dated file (beyond 60 s of clock skew) is dropped and logged, and FlUni starts at the prior.
+Test launches and the unit-test host never read or write it (Debug: `-keepRiskState YES` opts a test launch in, e.g.
+with `-demoPeer`). Reset exposure and Delete my data remove it.
+
 **Clock.** Students see live time only: the device's local weekday and time of day mapped onto the run
 (`Core/LiveClock.swift`, rule in `docs/building-heat-format.md`), recomputed every 15 s and on any system clock,
 time zone or date change. The Map tab says "Now · updated 4:30 PM". In Debug builds, Me > Developer tools > Demo
@@ -206,7 +223,9 @@ Launch arguments (also usable from Xcode's scheme): `-risk none|possible|contagi
 `-sources UWB,BLE,GPS`, `-heatmapURL http://…`, `-skipOnboarding`; FlUni Debug also takes `-demoPeer contagious@0.5`.
 
 **Link and UWB uptime.** One MPC handshake at a time per phone (field logs: concurrent handshakes
-mostly hung), 6 s invite timeout, discovery restarts only when nothing is connecting. The app logs
+mostly hung), 6 s invite timeout. No discovery restarts, and an MPC browser is never stopped: stopping one
+crashes the app now and then inside Apple's code (`_BrowserCancel` SIGTRAP, see `Core/BrowserLedger.swift`).
+Retired browsers are parked until iOS backgrounds the app. The app logs
 `[fluni] link metric handshake=…` per link and `link metric uwb_resume gap=… after_drop=…` when UWB comes
 back; `tools/stress.py` reports them (`handshake_med`, `link_failed`, `uwb_gap_max`, `uwb_after_drop_max`).
 

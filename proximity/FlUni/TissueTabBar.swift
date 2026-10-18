@@ -73,4 +73,14 @@ extension View {
     func tissueTabBarInset() -> some View {
         safeAreaInset(edge: .bottom, spacing: 0) { Color.clear.frame(height: TissueTabBar.reserved) }
     }
+
+    /// Room under a tab's scrolling content, so its last line scrolls clear of the box drawing.
+    /// `alert`: also clear a tissue popped out of the box by the tissue alert (Today). On the scroll view
+    /// itself: `tissueTabBarInset()` on the tab didn't reach the ScrollView inside its NavigationStack, so the
+    /// last row ended up under the box.
+    func tissueTabBarScrollRoom(alert: Bool = false) -> some View {
+        // Three quarters of the full clearance (the owner found the full amount a little much): the views' own
+        // bottom padding and button height still keep the last line above the box.
+        contentMargins(.bottom, 0.75 * (TissueTabBar.reserved + (alert ? TissueAlert.poppedRise : 0) + 16), for: .scrollContent)
+    }
 }

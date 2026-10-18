@@ -59,8 +59,8 @@ header.bar { gap: 10px 18px; }
 .options { flex-wrap: nowrap; gap: 8px; }
 .options > * { flex: none; }
 .seg { display: inline-flex; background: var(--surface-2); border-radius: 999px; padding: 2px; }
-.seg button { font: inherit; font-size: 13px; color: var(--ink-2); border: 0; background: none; border-radius: 999px; padding: 0 13px;
-  height: 26px; cursor: pointer; white-space: nowrap; }
+.seg button { font: inherit; font-size: 13px; color: var(--ink-2); border: 0; background: none; border-radius: 999px; padding: 0 18px;
+  height: 26px; cursor: pointer; white-space: nowrap; flex: 1 1 0; min-width: 128px; } /* two equal halves */
 .seg button[aria-pressed="true"] { background: var(--ink); color: var(--surface); }
 .seg button:not([aria-pressed="true"]):hover { background: var(--surface-3); }
 .pill { font: inherit; font-size: 13px; color: var(--ink); height: 30px; border: 0; border-radius: 999px; padding: 0 12px;
@@ -98,8 +98,8 @@ header.bar { gap: 10px 18px; }
 
 /* shortcut hint and toast */
 .hint-btn { position: absolute; right: 12px; bottom: 28px; z-index: 600; width: 28px; height: 28px; border-radius: 50%; border: 0;
-  background: var(--surface); color: var(--ink-2); box-shadow: var(--shadow); font: 600 14px/1 var(--font); cursor: pointer; opacity: .8; }
-.hint-btn:hover { opacity: 1; }
+  background: var(--surface); color: var(--ink); box-shadow: var(--shadow); font: 600 14px/1 var(--font); cursor: pointer; opacity: .8; }
+.hint-btn:hover { opacity: 1; } /* ink, not ink-2: at .8 opacity ink-2 was 4.2:1 */
 .hint-card { position: absolute; right: 12px; bottom: 64px; z-index: 600; padding: 10px 14px; background: var(--surface); border-radius: var(--radius);
   box-shadow: var(--shadow); font-size: 13px; color: var(--ink-2); }
 .hint-card h3 { margin: 0 0 6px; font-size: 12px; letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
@@ -141,7 +141,7 @@ header.bar { gap: 10px 18px; }
 
 document.head.append(el('style', { textContent: CSS })); // at import, so the loading bar is styled before the run loads
 
-const SHORT = { demo: 'Room-level', public: 'What users see', airborne: 'Air by room', airflow: 'Airflow (exp.)' };
+const SHORT = { demo: 'Expected infected', public: 'What users see', airborne: 'Air by room', airflow: 'Airflow (exp.)' };
 const KEYS = [['Space', 'Play / pause'], ['← →', 'Back / forward 10 min'], ['[  ]', 'Slower / faster'], ['J', 'Jump to…'], ['Esc', 'Close the phone']];
 
 // api: { map, L, t0, t1, numericTime, getNow(), seek(ms), isPlaying(), togglePlay(), select(id), selected(), current(), steps: [{ t, expected }],

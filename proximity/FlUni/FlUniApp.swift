@@ -14,16 +14,10 @@ struct FlUniApp: App {
     @State private var started = false
     @StateObject private var router = AppRouter.shared
     @StateObject private var reportStore = SelfReportStore()
-    @Environment(\.scenePhase) private var phase
-    /// Lisa's opening animation, played each time the student opens FlUni (Core/IntroGate.swift); off for UI
-    /// tests and unit-test hosts so they never wait on it.
-    @State private var showIntro: Bool
-    /// The intro is showing its still poster and waiting to play (see LaunchIntro.held).
-    @State private var introHeld = true
-    @State private var introGate = IntroGate()
     private let introAllowed: Bool
 
     init() {
+        UITabBar.appearance().isHidden = true  // Lisa's tissue box is the tab bar (AppRoot); no system bar, not even for VoiceOver
         #if DEBUG
         // Test-only (XCUITest sets these environment variables; launch arguments can't trigger them). Debug builds only.
         let env = ProcessInfo.processInfo.environment
@@ -43,116 +37,21 @@ struct FlUniApp: App {
                                                    object: nil, queue: nil) { _ in
                 // Posted on the main thread (queue nil runs it right there).
                 MainActor.assumeIsolated {
-                    // A launch someone will see: decode the intro's poster off the main thread before the first frame.
-                    if UIApplication.shared.applicationState != .background { IntroArt.shared.preparePoster() }
                     if UserDefaults.standard.bool(forKey: "hasOnboarded") { FlUniApp.startDetection() }
                 }
             }
         }
         introAllowed = !skipRadios && !LaunchMode.isUnitTestHost
-        _showIntro = State(initialValue: introAllowed)  // the poster covers the very first frame, held until active
     }
     private let skipRadios: Bool  // test-only: UI tests never broadcast
-    @State private var introRun = 0
-
-    private func introPhase(_ p: ScenePhase) {
-        let phase: IntroGate.Phase = p == .active ? .active : p == .background ? .background : .inactive
-        if phase == .background { coverWithPoster() }
-        if phase == .active { IntroArt.shared.uncover() }  // SwiftUI's held poster is on screen beneath it by now
-        guard introGate.phase(phase), introAllowed else { return }
-        if !(showIntro && introHeld) { introRun += 1 }  // a held poster plays as it is; otherwise start one
-        showIntro = true
-        introHeld = false
-    }
-
-    private func introFailsafe() async {
-        var activeFor = 0.0, shownFor = 0.0
-        while !Task.isCancelled {
-            try? await Task.sleep(for: .milliseconds(500))
-            let active = UIApplication.shared.applicationState == .active
-            activeFor = active ? activeFor + 0.5 : 0
-            shownFor = showIntro && active ? shownFor + 0.5 : 0
-            guard activeFor >= 1 else { continue }
-            IntroArt.shared.uncover()
-            if showIntro && introHeld { introHeld = false }                     // a held poster plays now
-            if shownFor >= IntroArt.maxOnScreen { showIntro = false; introHeld = false }  // never stuck
-        }
-    }
-
-    /// Covers the app with the intro's still poster as it leaves, so the app-switcher snapshot and the first frame of
-    /// the next open are the poster rather than the app. It only plays once IntroGate says so.
-    private func coverWithPoster() {
-        // A late didEnterBackground after the app is already active again must not hold a poster no phase change
-        // would ever release (the "stuck on the poster" bug).
-        guard introAllowed, !(showIntro && introHeld), UIApplication.shared.applicationState != .active else { return }
-        introRun += 1
-        showIntro = true
-        introHeld = true
-    }
-
-    private var needsOnboarding: Bool { !hasOnboarded && !LaunchMode.isUnitTestHost }
 
     var body: some Scene {
         WindowGroup {
-            Group {
-                if needsOnboarding {
-                    OnboardingView { hasOnboarded = true; startOnce(); if started { model.resume() } }  // resume: radios are off after "Delete my data"
-                } else {
-                    // Lisa's tissue box is the tab bar. No system TabView: hidden under her drawing it still showed
-                    // its own Today/Map/Me buttons to VoiceOver and kept hers out of the accessibility tree. All three
-                    // screens stay alive (the map's web view isn't reloaded); only the selected one is visible,
-                    // tappable and accessible.
-                    ZStack {
-                        TodayView(model: model).tissueTab(.today, selected: router.tab)
-                        BundledMapView().tissueTab(.map, selected: router.tab)
-                        MeView(model: model).tissueTab(.me, selected: router.tab)
-                    }
-                    .overlay { TissueTabBar(selection: $router.tab) }
-                    .tint(Theme.ink)
-                    .onAppear {
-                        Signposts.poi.emitEvent("tabs on screen")
-                        startOnce(); router.becomeReady()
-                        #if DEBUG
-                        model.startDemoPeerFromLaunchArguments()  // -demoPeer contagious@0.5: watch p climb live
-                        PerfTour.startIfAsked(router)
-                        // -keepAwake YES: the screen doesn't auto-lock while FlUni is open (Instruments needs it unlocked).
-                        if UserDefaults.standard.bool(forKey: "keepAwake") { UIApplication.shared.isIdleTimerDisabled = true }
-                        #endif
-                    }
-                    // At the tab level so the close-contact moment shows whichever tab is open.
-                    .background { ModelReactions(model: model, onCloseContact: { router.showCloseContact() }) }
-                    .fullScreenCover(isPresented: Binding(get: { router.sheet == .closeContact }, set: { if !$0 { router.sheet = nil } })) {
-                        CloseContactSheet { router.sheet = nil }
-                    }
-                    .sheet(isPresented: Binding(get: { router.sheet == .reportSymptoms }, set: { if !$0 { router.sheet = nil } })) {
-                        ReportSheet(kind: .symptoms, model: model, store: reportStore)
-                    }
-                }
-            }
-            // Lisa's opening animation over whatever the first screen is (design pass).
-            // A new id each time restarts it from the poster, however quickly the app came up.
-            .overlay { if showIntro { LaunchIntro(held: introHeld) { showIntro = false; Signposts.poi.emitEvent("intro done") }.id(introRun) } }
-            .onAppear { introPhase(phase) }
-            // Failsafe: whatever the order of lifecycle events, once the app has been active for a moment the poster
-            // plays, and nothing covers the app for more than a few seconds.
-            .task { await introFailsafe() }
-            // SwiftUI draws the held poster only after iOS has taken the app-switcher snapshot, so a plain UIKit copy of
-            // the poster covers the window at once (IntroArt.cover) and comes off when the app is active again.
-            .onReceive(NotificationCenter.default.publisher(for: UIScene.didEnterBackgroundNotification)) { n in
-                coverWithPoster()
-                if introAllowed, UIApplication.shared.applicationState != .active, let scene = n.object as? UIWindowScene {
-                    IntroArt.shared.cover(scene)
-                }
-            }
-            // Forced light: the campfire palette is only defined and contrast-checked on warm paper.
-            .preferredColorScheme(.light)
-            // Sheets, Done / Cancel and links use ink, not system blue (blue on paper is only 3.8:1).
-            .tint(Theme.ink)
-            // The app may be killed in the background: save an exposure that is still going on, so a relaunch continues it.
-            .onChange(of: phase) { _, p in
-                if p == .background { model.exposureHistory.saveOngoing() }
-                introPhase(p)
-            }
+            // The window's content is its own view, so the state it shows (tab, sheets, intro) redraws it reliably;
+            // App-level @State/@StateObject changes don't always reach a WindowGroup's content (the tissue tabs
+            // lifted but the screen didn't switch, and the intro never appeared).
+            AppRoot(model: model, router: router, reportStore: reportStore, introAllowed: introAllowed,
+                    startOnce: startOnce, afterOnboarding: { if started { model.resume() } })
         }
     }
 
@@ -186,6 +85,17 @@ struct FlUniApp: App {
 }
 
 /// The app-level reaction to the model, in a view of its own so only this empty view redraws on a model change.
+/// Observes the model for the tissue alert only, so the scene body above stays unobserved (see `model`).
+private struct TissueAlertHost: View {
+    @ObservedObject var model: ProximityModel
+    let onToday: Bool
+    var body: some View {
+        // flu-persist: "already read" lives in the model's saved alert state, so a relaunch doesn't pop it again.
+        TissueAlert(level: model.exposure.level, visible: onToday && model.myRisk == .none,
+                    isRead: { model.isAlertRead($0) }, onRead: { model.markAlertRead($0) })
+    }
+}
+
 private struct ModelReactions: View {
     @ObservedObject var model: ProximityModel
     let onCloseContact: () -> Void
@@ -235,3 +145,121 @@ enum PerfTour {
     }
 }
 #endif
+
+/// Everything inside FlUni's window: onboarding or the tissue-tab screens, sheets, and Lisa's intro on every open.
+private struct AppRoot: View {
+    let model: ProximityModel
+    @ObservedObject var router: AppRouter
+    @ObservedObject var reportStore: SelfReportStore
+    let introAllowed: Bool
+    let startOnce: () -> Void
+    let afterOnboarding: () -> Void
+    @AppStorage("hasOnboarded") private var hasOnboarded = false
+    @Environment(\.scenePhase) private var phase
+    /// Lisa's opening animation, played each time the student opens FlUni (Core/IntroGate.swift); off for UI
+    /// tests and unit-test hosts so they never wait on it.
+    @State private var introGate = IntroGate()
+
+    private var needsOnboarding: Bool { !hasOnboarded && !LaunchMode.isUnitTestHost }
+
+    private func introPhase(_ p: ScenePhase) {
+        let phase: IntroGate.Phase = p == .active ? .active : p == .background ? .background : .inactive
+        guard introGate.phase(phase), introAllowed else { return }
+        IntroController.shared.play()
+    }
+
+    var body: some View {
+        Group {
+            if needsOnboarding {
+                OnboardingView { hasOnboarded = true; startOnce(); afterOnboarding() }  // resume: radios are off after "Delete my data"
+            } else {
+                // Lisa's tissue box is the tab bar. No system TabView: hidden under her drawing it still showed
+                // its own Today/Map/Me buttons to VoiceOver and kept hers out of the accessibility tree. All three
+                // screens stay alive (the map's web view isn't reloaded); only the selected one is visible,
+                // tappable and accessible.
+                // Only the map stays alive when hidden (its web view is slow to load). Today and Me are drawn only
+                // while selected: their UIKit-hosted navigation stacks ignored SwiftUI opacity, so a hidden Today
+                // stayed on top of the other tabs.
+                // A real TabView manages each tab's navigation stack (a hand-made ZStack left Today's UIKit-hosted
+                // stack on screen after switching). Its own bar is hidden (here and via UITabBar appearance, which
+                // also takes it out of VoiceOver); Lisa's tissue box is drawn over it.
+                TabView(selection: $router.tab) {
+                    TodayView(model: model, store: reportStore).tag(AppRouter.Tab.today).toolbar(.hidden, for: .tabBar)  // scroll room: tissueTabBarScrollRoom
+                    BundledMapView().tag(AppRouter.Tab.map).toolbar(.hidden, for: .tabBar).tissueTabBarInset()
+                    MeView(model: model, store: reportStore).tag(AppRouter.Tab.me).toolbar(.hidden, for: .tabBar)  // scroll room: tissueTabBarScrollRoom
+                }
+                .overlay { TissueTabBar(selection: $router.tab) }
+                // Lisa's tissue alert: pops out of the tab-bar box on Today for a new alert (TissueAlert.swift).
+                .overlay { TissueAlertHost(model: model, onToday: router.tab == .today) }
+                .tint(Theme.ink)
+                .onAppear {
+                    Signposts.poi.emitEvent("tabs on screen")
+                    startOnce(); router.becomeReady()
+                    #if DEBUG
+                    model.startDemoPeerFromLaunchArguments()  // -demoPeer contagious@0.5: watch p climb live
+                    PerfTour.startIfAsked(router)
+                    // -keepAwake YES: the screen doesn't auto-lock while FlUni is open (Instruments needs it unlocked).
+                    if UserDefaults.standard.bool(forKey: "keepAwake") { UIApplication.shared.isIdleTimerDisabled = true }
+                    #endif
+                }
+                // At the tab level so the close-contact moment shows whichever tab is open.
+                .background { ModelReactions(model: model, onCloseContact: { router.showCloseContact() }) }
+                .fullScreenCover(isPresented: Binding(get: { router.sheet == .closeContact }, set: { if !$0 { router.sheet = nil } })) {
+                    CloseContactSheet { router.sheet = nil }
+                }
+                .sheet(isPresented: Binding(get: { router.sheet == .reportSymptoms }, set: { if !$0 { router.sheet = nil } })) {
+                    ReportSheet(kind: .symptoms, model: model, store: reportStore)
+                }
+            }
+        }
+        // Lisa's opening animation over whatever the first screen is (design pass).
+        // A new id each time restarts it from the poster, however quickly the app came up.
+        // UIKit's own lifecycle drives the intro: SwiftUI's scenePhase reported "inactive" here at launch and never
+        // delivered the change to "active", so the intro never played. IntroGate ignores repeats.
+        .onAppear { if UIApplication.shared.applicationState == .active { introPhase(.active) } }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)) { _ in introPhase(.active) }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in introPhase(.background) }
+        // Forced light: the campfire palette is only defined and contrast-checked on warm paper.
+        .preferredColorScheme(.light)
+        // Sheets, Done / Cancel and links use ink, not system blue (blue on paper is only 3.8:1).
+        .tint(Theme.ink)
+        // The app may be killed in the background: save an exposure that is still going on, so a relaunch continues it.
+        .onChange(of: phase) { _, p in
+            if p == .background { model.exposureHistory.saveOngoing() }
+            introPhase(p)
+        }
+    }
+}
+
+/// Plays Lisa's intro in its own window above everything (tab bar, sheets), not as a SwiftUI overlay: overlays on
+/// the window's root under a TabView never appeared. Touches pass through to the app; the window goes when done.
+@MainActor
+final class IntroController {
+    static let shared = IntroController()
+    private var window: UIWindow?
+    private var run = 0
+
+    func play() {
+        guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene })
+            .first(where: { $0.activationState == .foregroundActive }) ?? UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene }).first else { return }
+        run += 1
+        let thisRun = run
+        let w = UIWindow(windowScene: scene)
+        w.windowLevel = .alert + 1
+        w.isUserInteractionEnabled = false
+        w.backgroundColor = .clear
+        let host = UIHostingController(rootView: LaunchIntro { [weak self] in self?.done(thisRun) })
+        host.view.backgroundColor = .clear
+        w.rootViewController = host
+        w.isHidden = false
+        window?.isHidden = true
+        window = w
+    }
+
+    private func done(_ r: Int) {
+        guard r == run else { return }
+        window?.isHidden = true
+        window = nil
+    }
+}

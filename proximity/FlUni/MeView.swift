@@ -3,7 +3,7 @@ import SwiftUI
 /// Report how I feel, stay-home guidance while sick, plus the way into the Developer screen.
 struct MeView: View {
     @ObservedObject var model: ProximityModel
-    @StateObject private var store = SelfReportStore()
+    @ObservedObject var store: SelfReportStore
     @State private var sheet: ReportKind?
     @State private var blocked: String?
     #if DEBUG
@@ -69,6 +69,7 @@ struct MeView: View {
                 }
                 .padding(16)
             }
+            .tissueTabBarScrollRoom()
             .background(Theme.paper)
             .navigationTitle("Me")
             #if DEBUG

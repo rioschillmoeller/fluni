@@ -51,6 +51,9 @@ class Population:
     arch_params: dict                   # cfg["population"]["archetypes"]
     walk_speed: np.ndarray = None       # per-mode speeds (m/s); None -> speed_mps for both
     bike_speed: np.ndarray = None
+    compliance_kind_mult: dict = None   # {action kind: multiplier} with personality.rates_source = calibrated
+    big_five: np.ndarray = None         # (N, 5) personality.TRAITS when personality.mode = big_five
+    social_scale: np.ndarray = None     # (N,) multiplier on party/event/hangout rates (big_five), else None
     FLEX_KEYS: list = field(default_factory=lambda: list(FLEX_KEYS))
     _param_cache: dict = field(default_factory=dict, repr=False)
     _param_keys: dict = field(default_factory=dict, repr=False)
@@ -328,6 +331,9 @@ def _favorites(campus, btype, home_b, pcfg, rng):
 
 # ==================================================================== builder
 def build_population(cfg, campus, rng) -> Population:
+    from . import rates
+    ap_config = cfg["population"]["archetypes"]
+    cfg, _ = rates.adjusted(cfg)    # personality.rates_source = "calibrated": fitted base rates (rates.py)
     pcfg = cfg["population"]
     N = int(cfg["run"]["n_agents"])
     A = codes.ARCHETYPES
@@ -368,7 +374,11 @@ def build_population(cfg, campus, rng) -> Population:
         m = archetype == a_i
         n = int(m.sum())
         mask[m] = _beta(rng, ap[a]["mask_propensity_beta"], n)
-        comp[m] = _beta(rng, ap[a]["compliance_beta"], n)
+        comp[m] = _beta(rng, ap_config[a]["compliance_beta"], n)
+        if ap[a]["compliance_beta"] != ap_config[a]["compliance_beta"]:
+            # calibrated rates: quantile-map onto the new Beta, so the RNG stream (dorms, friends...) is unchanged
+            from scipy.stats import beta as _sbeta
+            comp[m] = _sbeta.ppf(_sbeta.cdf(comp[m], *ap_config[a]["compliance_beta"]), *ap[a]["compliance_beta"])
         hon[m] = _beta(rng, ap[a]["honesty_beta"], n)
     app_rate = float(pcfg["has_app_rate"])
     p_app = np.clip(app_rate + pcfg.get("has_app_compliance_slope", 0.0) * (comp - comp.mean()), 0.01, 0.99)
@@ -407,7 +417,7 @@ def build_population(cfg, campus, rng) -> Population:
     fav_common = _favorites(campus, "common_room", home_b, pcfg, rng)
 
     w_id = max(4, len(str(N - 1)))
-    return Population(
+    pop = Population(
         N=N, agent_id=[f"A{i:0{w_id}d}" for i in range(N)], archetype=archetype, class_year=class_year,
         home_b=home_b, home_room=home_room, bed_slot=bed_slot, friend_group=friend_group,
         team_id=team_id, teams=teams, transport=transport, speed_mps=speed,
@@ -417,3 +427,8 @@ def build_population(cfg, campus, rng) -> Population:
         fav_dining=fav_dining, fav_library=fav_library, fav_common=fav_common,
         class_schedule=[[] for _ in range(N)], arch_params=ap,
     )
+    pop.compliance_kind_mult = pcfg.get("_compliance_kind_mult")
+    from . import personality
+    if personality.is_on(cfg):
+        personality.Personality(cfg).apply(cfg, pop)
+    return pop
