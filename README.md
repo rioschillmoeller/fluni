@@ -1,7 +1,5 @@
 # FlUni
 
-See heatmap demo here: https://aidenyj.github.io/fluni/heatmap/
-
 The app reduces the spread of flu and other illnesses on a college campus (pilot: Stanford) by telling people
 **what to do**, not just that "a contact of a contact is sick."
 
